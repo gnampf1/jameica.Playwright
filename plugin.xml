@@ -6,6 +6,8 @@
         name="Playwright" version="1.61.0" class="de.gnampf.playwright.Plugin">
 
   <description>Stellt die Playwright-Browser-Automatisierung inkl. stealth4j als gemeinsame Bibliothek fuer andere Plugins bereit. Die Plugin-Version entspricht der enthaltenen Playwright-Version.</description>
+  <url>https://www.gnampf.cyou/hibiscus/Playwright/1.61.0/Playwright.zip</url>
+  <homepage>https://github.com/gnampf1/Playwright</homepage>
   <license>Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0</license>
 
   <requires jameica="2.6.0+">
