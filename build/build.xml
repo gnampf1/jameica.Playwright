@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+
+<project basedir=".." default="sign" name="Playwright" xmlns:resolver="antlib:org.apache.maven.resolver.ant">
+
+  <taskdef uri="antlib:org.apache.maven.resolver.ant" resource="org/apache/maven/resolver/ant/antlib.xml">
+    <classpath>
+      <fileset dir="lib" includes="maven-resolver-ant-tasks-*uber.jar"/>
+    </classpath>
+  </taskdef>
+
+  <property name="build.dir" value="build" />
+  <property file="${build.dir}/build.properties" />
+
+  <!-- ============================================================
+       1) Neueste Playwright-Version von Maven Central ermitteln.
+          Diese Version ist zugleich die Plugin-/Projekt-Version.
+       ============================================================ -->
+  <target name="-fetch-version">
+    <mkdir dir="${build.dir}" />
+    <get src="https://repo1.maven.org/maven2/com/microsoft/playwright/playwright/maven-metadata.xml"
+         dest="${build.dir}/pw-metadata.xml" usetimestamp="false" />
+    <xmlproperty file="${build.dir}/pw-metadata.xml" prefix="pw" collapseattributes="true" />
+    <property name="playwright.version" value="${pw.metadata.versioning.release}" />
+    <echo message="Neueste Playwright-Version: ${playwright.version}" />
+  </target>
+
+  <!-- ============================================================
+       2) Playwright (+ driver / driver-bundle) und kotlin-stdlib
+          in lib/ aufloesen.
+       ============================================================ -->
+  <target name="-resolve" depends="-fetch-version">
+    <resolver:resolve failOnMissingAttachments="false">
+      <resolver:dependencies>
+        <resolver:dependency groupId="com.microsoft.playwright" artifactId="playwright" version="${playwright.version}" />
+        <resolver:dependency groupId="org.jetbrains.kotlin" artifactId="kotlin-stdlib" version="${kotlin.version}" />
+      </resolver:dependencies>
+      <resolver:files refid="pw.files" dir="lib" layout="{artifactId}-{classifier}.{extension}" />
+    </resolver:resolve>
+  </target>
+
+  <!-- ============================================================
+       3) stealth4j aus dem Quellcode gegen die aufgeloeste Playwright-
+          Version fuer Java 17 kompilieren (die veroeffentlichte Maven-
+          Version ist fuer neuere Java-Versionen gebaut). Kotlin-Quellen
+          + JS-Ressourcen (die eigentlichen Stealth-Patches) ins Jar.
+       ============================================================ -->
+  <available file="${tools.dir}/kotlinc/bin/kotlinc" property="kotlinc.present" />
+  <target name="-get-kotlinc" unless="kotlinc.present">
+    <mkdir dir="${tools.dir}" />
+    <echo message="Lade Kotlin-Compiler ${kotlin.version} (einmalig) ..." />
+    <get src="https://github.com/JetBrains/kotlin/releases/download/v${kotlin.version}/kotlin-compiler-${kotlin.version}.zip"
+         dest="${tools.dir}/kotlin-compiler.zip" usetimestamp="true" />
+    <unzip src="${tools.dir}/kotlin-compiler.zip" dest="${tools.dir}" />
+    <chmod perm="+x"><fileset dir="${tools.dir}/kotlinc/bin" /></chmod>
+  </target>
+
+  <target name="-get-stealth-src">
+    <mkdir dir="${tools.dir}" />
+    <get src="https://github.com/kihdev/playwright-stealth-4j/archive/refs/heads/main.zip"
+         dest="${tools.dir}/stealth-src.zip" usetimestamp="false" />
+    <delete dir="${tools.dir}/stealth-src" />
+    <unzip src="${tools.dir}/stealth-src.zip" dest="${tools.dir}/stealth-src" />
+  </target>
+
+  <target name="build-stealth" depends="-resolve,-get-kotlinc,-get-stealth-src">
+    <property name="stealth.root" value="${tools.dir}/stealth-src/playwright-stealth-4j-main" />
+    <delete dir="${tools.dir}/stealth-classes" />
+    <mkdir dir="${tools.dir}/stealth-classes" />
+    <path id="stealth.cp">
+      <fileset dir="lib" includes="playwright.jar,kotlin-stdlib*.jar" />
+    </path>
+    <pathconvert property="stealth.cp.str" refid="stealth.cp" />
+    <echo message="Kompiliere stealth4j (jvm-target 17) gegen Playwright ${playwright.version} ..." />
+    <exec executable="${tools.dir}/kotlinc/bin/kotlinc" failonerror="true">
+      <arg value="-classpath" /><arg value="${stealth.cp.str}" />
+      <arg value="-jvm-target" /><arg value="17" />
+      <arg value="-d" /><arg value="${tools.dir}/stealth-classes" />
+      <arg file="${stealth.root}/src/main/kotlin" />
+    </exec>
+    <!-- Klassen + JS-Ressourcen zusammen ins Stealth-Jar -->
+    <jar destfile="lib/playwright-stealth-4j.jar">
+      <fileset dir="${tools.dir}/stealth-classes" />
+      <fileset dir="${stealth.root}/src/main/resources" />
+    </jar>
+    <echo message="stealth4j-Jar gebaut: lib/playwright-stealth-4j.jar" />
+  </target>
+
+  <!-- ============================================================
+       Build-Grundgeruest (analog SyncusGnampfus). Plugin-Version =
+       Playwright-Version; plugin.xml wird dafuer angepasst.
+       ============================================================ -->
+  <target name="init" depends="-resolve,build-stealth">
+    <buildnumber file="${build.dir}/BUILD" />
+    <replaceregexp file="plugin.xml" flags="g"
+        match="(name=&quot;Playwright&quot;\s+version=)&quot;[^&quot;]*&quot;"
+        replace="\1&quot;${playwright.version}&quot;" />
+    <!-- kotlin-Import-Floor auf die kompilierte kotlin-Version setzen. -->
+    <replaceregexp file="plugin.xml" flags="g"
+        match="(&lt;import plugin=&quot;kotlin&quot; version=)&quot;[^&quot;]*&quot;"
+        replace="\1&quot;${kotlin.version}+&quot;" />
+    <xmlproperty file="plugin.xml" collapseattributes="true" />
+    <!-- Erst jetzt (plugin.version/plugin.name/build.number sind bekannt) die davon
+         abhaengigen Pfade definieren. -->
+    <property name="project.release"     value="releases/${plugin.version}-${build.number}" />
+    <property name="project.tmp"         value="${project.release}/tmp" />
+    <property name="project.zipdir"      value="${project.release}/${plugin.name}" />
+    <property name="class.dir"           value="${project.tmp}/bin" />
+    <property name="define.jarfilename"  value="${plugin.name}.jar" />
+    <property name="define.zipfilename"  value="${plugin.name}.zip" />
+    <property name="define.srcfilename"  value="${plugin.name}.src.zip" />
+    <echo message="VERSION: ${plugin.version}" />
+    <echo message="BUILD  : ${build.number}" />
+    <echo message="JAVA   : ${java.version}" />
+    <path id="compilepath">
+      <pathelement path="${define.compilepath}" />
+      <fileset dir="${lib.dir}"><include name="**/*.jar" /></fileset>
+    </path>
+  </target>
+
+  <target depends="init" name="compile" description="compiles the library Plugin class">
+    <mkdir dir="${class.dir}" />
+    <javac debug="true" includeantruntime="false" debuglevel="lines,vars,source"
+           source="${define.java.version}" target="${define.java.version}"
+           encoding="${define.encoding}" destdir="${class.dir}" srcdir="${src.dir}">
+      <classpath refid="compilepath" />
+    </javac>
+  </target>
+
+  <target depends="compile" name="jar" description="generates the plugin jar">
+    <mkdir dir="${project.release}" />
+    <mkdir dir="${project.zipdir}" />
+    <tstamp />
+    <jar destfile="${project.zipdir}/${define.jarfilename}">
+      <manifest>
+        <attribute name="Built-By" value="${user.name}" />
+        <attribute name="Built-Date" value="${DSTAMP}" />
+        <attribute name="Implementation-Title" value="${plugin.name}" />
+        <attribute name="Implementation-Version" value="${plugin.version}" />
+        <attribute name="Implementation-Buildnumber" value="${build.number}" />
+      </manifest>
+      <fileset dir="${class.dir}" />
+    </jar>
+  </target>
+
+  <target depends="jar" name="zip" description="assembles + zips the plugin">
+    <mkdir dir="${project.zipdir}/lib" />
+    <copy todir="${project.zipdir}/lib">
+      <fileset dir="${lib.dir}">
+        <exclude name="**/*ant*.jar" />
+        <exclude name="**/maven-resolver-ant-tasks*.jar" />
+        <!-- kotlin-stdlib nur zum Kompilieren von stealth4j in lib/, NICHT ausliefern —
+             kommt aus dem separaten "kotlin"-Plugin. -->
+        <exclude name="**/kotlin-stdlib*.jar" />
+      </fileset>
+    </copy>
+    <copy file="plugin.xml" todir="${project.zipdir}" />
+    <copy todir="${project.zipdir}"><fileset dir="." includes="LICENSE*" /></copy>
+    <zip destfile="${project.release}/${define.zipfilename}">
+      <fileset dir="${project.release}">
+        <include name="${plugin.name}" />
+        <include name="${plugin.name}/**" />
+      </fileset>
+    </zip>
+  </target>
+
+  <target depends="init" name="src" description="builds the source package">
+    <mkdir dir="${project.tmp}/${plugin.name}" />
+    <copy todir="${project.tmp}/${plugin.name}">
+      <fileset dir=".">
+        <include name="plugin.xml" />
+        <include name="${src.dir}/**" />
+        <include name="${build.dir}/build.xml" />
+        <include name="${build.dir}/build.properties" />
+      </fileset>
+    </copy>
+    <zip casesensitive="true" zipfile="${project.release}/${define.srcfilename}">
+      <fileset dir="${project.tmp}"><include name="${plugin.name}/**" /></fileset>
+    </zip>
+  </target>
+
+  <!-- Signiert das Zip (SHA1-Signatur fuer jameica.update), wie bei SyncusGnampfus. -->
+  <target name="sign" depends="zip,src" description="signs the zip for jameica.update">
+    <echo message="Creating checksum files" />
+    <checksum format="MD5SUM" algorithm="SHA" file="${project.release}/${define.zipfilename}" />
+    <checksum format="MD5SUM" algorithm="SHA" file="${project.release}/${define.srcfilename}" />
+    <echo message="Creating SHA1 signature" />
+    <loadfile property="storepass" srcFile="${signjar.storepass}" />
+    <java classname="de.willuhn.security.Signature" failonerror="true" dir="${project.release}" fork="true">
+      <classpath refid="compilepath" />
+      <arg line="sign -keystore ${signjar.keystore} -storepass ${storepass} -alias &quot;${signjar.alias}&quot; -keypass ${storepass} -file ${define.zipfilename} -sig ${define.zipfilename}.sha1" />
+    </java>
+  </target>
+
+  <target name="clean" description="cleanup (keeps downloaded tools/jars)">
+    <delete dir="${project.tmp}" />
+    <delete dir="${project.zipdir}" />
+  </target>
+</project>

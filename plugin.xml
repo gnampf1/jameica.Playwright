@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<plugin xmlns="http://www.willuhn.de/schema/jameica-plugin"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.willuhn.de/schema/jameica-plugin http://www.willuhn.de/schema/jameica-plugin-1.2.xsd"
+        name="Playwright" version="1.61.0" class="de.gnampf.playwright.Plugin">
+
+  <description>Stellt die Playwright-Browser-Automatisierung inkl. stealth4j als gemeinsame Bibliothek fuer andere Plugins bereit. Die Plugin-Version entspricht der enthaltenen Playwright-Version.</description>
+  <license>Apache-2.0 - https://www.apache.org/licenses/LICENSE-2.0</license>
+
+  <requires jameica="2.6.0+">
+    <!-- Kotlin-Runtime kommt aus dem separaten "kotlin"-Bibliotheks-Plugin (stealth4j braucht
+         sie zur Laufzeit). Floor wird beim Build auf die kompilierte kotlin-Version gesetzt. -->
+    <import plugin="kotlin" version="2.2.0+" />
+  </requires>
+
+  <!-- Nur das schlanke Plugin-Jar nach Service-Klassen durchsuchen, nicht die grossen
+       Playwright-/driver-bundle-Jars. -->
+  <classfinder>
+    <include>Playwright\.jar</include>
+    <include>.*\.class</include>
+  </classfinder>
+</plugin>
